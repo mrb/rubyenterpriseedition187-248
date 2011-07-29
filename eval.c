@@ -5825,7 +5825,6 @@ eval_check_tick()
     if ((++tick & 0xff) == 0) {
         CHECK_INTS;             /* better than nothing */
         stack_check();
-        rb_gc_finalize_deferred();
     }
 }
 
@@ -11419,7 +11418,6 @@ rb_thread_schedule()
     }
 #endif
     rb_thread_pending = 0;
-    rb_gc_finalize_deferred();
     if (curr_thread == curr_thread->next
         && curr_thread->status == THREAD_RUNNABLE)
         return;
