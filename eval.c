@@ -11431,7 +11431,6 @@ rb_thread_schedule()
     FD_ZERO(&th->scratch_readfds);
     FD_ZERO(&th->scratch_writefds);
     FD_ZERO(&th->scratch_exceptfds);
-    bzero(&th->scratch_delay_tv, sizeof(struct timeval));
     delay = DELAY_INFTY;
     now = -1.0;
 
