@@ -461,6 +461,15 @@ struct rb_thread {
     fd_set readfds;
     fd_set writefds;
     fd_set exceptfds;
+
+    /* The following scratch structs are exclusively used in
+       eval.c:rb_thread_schedule() to remove pressure from
+       the stack. */
+    fd_set scratch_readfds;
+    fd_set scratch_writefds;
+    fd_set scratch_exceptfds;
+    struct timeval scratch_delay_tv;
+
     int select_value;
     double delay;
     rb_thread_t join;
