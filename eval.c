@@ -11428,13 +11428,15 @@ rb_thread_schedule()
 
   again:
     max = -1;
-    FD_ZERO(&th->scratch_readfds);
-    FD_ZERO(&th->scratch_writefds);
-    FD_ZERO(&th->scratch_exceptfds);
     delay = DELAY_INFTY;
     now = -1.0;
 
     FOREACH_THREAD_FROM(curr, th) {
+        FD_ZERO(&th->scratch_readfds);
+        FD_ZERO(&th->scratch_writefds);
+        FD_ZERO(&th->scratch_exceptfds);
+        bzero(&th->scratch_delay_tv, sizeof(struct timeval));
+
         th->wait_for &= ~WAIT_DONE;
         if (!found && th->status <= THREAD_RUNNABLE) {
             found = 1;
