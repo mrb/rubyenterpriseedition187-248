@@ -11403,10 +11403,7 @@ rb_thread_schedule()
     rb_thread_t curr;
     int found = 0;
 
-    fd_set readfds;
-    fd_set writefds;
-    fd_set exceptfds;
-    struct timeval delay_tv, *delay_ptr;
+    struct timeval *delay_ptr;
     double delay, now;  /* OK */
     int n, max;
     int need_select = 0;
@@ -11431,13 +11428,15 @@ rb_thread_schedule()
 
   again:
     max = -1;
-    FD_ZERO(&readfds);
-    FD_ZERO(&writefds);
-    FD_ZERO(&exceptfds);
     delay = DELAY_INFTY;
     now = -1.0;
 
     FOREACH_THREAD_FROM(curr, th) {
+        FD_ZERO(&th->scratch_readfds);
+        FD_ZERO(&th->scratch_writefds);
+        FD_ZERO(&th->scratch_exceptfds);
+        bzero(&th->scratch_delay_tv, sizeof(struct timeval));
+
         th->wait_for &= ~WAIT_DONE;
         if (!found && th->status <= THREAD_RUNNABLE) {
             found = 1;
@@ -11451,14 +11450,14 @@ rb_thread_schedule()
             }
         }
         if (th->wait_for & WAIT_FD) {
-            FD_SET(th->fd, &readfds);
+            FD_SET(th->fd, &th->scratch_readfds);
             if (max < th->fd) max = th->fd;
             need_select = 1;
         }
         if (th->wait_for & WAIT_SELECT) {
-            copy_fds(&readfds, &th->readfds, th->fd);
-            copy_fds(&writefds, &th->writefds, th->fd);
-            copy_fds(&exceptfds, &th->exceptfds, th->fd);
+            copy_fds(&th->scratch_readfds, &th->readfds, th->fd);
+            copy_fds(&th->scratch_writefds, &th->writefds, th->fd);
+            copy_fds(&th->scratch_exceptfds, &th->exceptfds, th->fd);
             if (max < th->fd) max = th->fd;
             need_select = 1;
             if (th->wait_for & WAIT_TIME) {
@@ -11496,20 +11495,20 @@ rb_thread_schedule()
         /* Convert delay to a timeval */
         /* If a thread is runnable, just poll */
         if (found) {
-            delay_tv.tv_sec = 0;
-            delay_tv.tv_usec = 0;
-            delay_ptr = &delay_tv;
+            th->scratch_delay_tv.tv_sec = 0;
+            th->scratch_delay_tv.tv_usec = 0;
+            delay_ptr = &th->scratch_delay_tv;
         }
         else if (delay == DELAY_INFTY) {
             delay_ptr = 0;
         }
         else {
-            delay_tv.tv_sec = delay;
-            delay_tv.tv_usec = (delay - (double)delay_tv.tv_sec)*1e6;
-            delay_ptr = &delay_tv;
+            th->scratch_delay_tv.tv_sec = delay;
+            th->scratch_delay_tv.tv_usec = (delay - (double)th->scratch_delay_tv.tv_sec)*1e6;
+            delay_ptr = &th->scratch_delay_tv;
         }
 
-        n = select(max+1, &readfds, &writefds, &exceptfds, delay_ptr);
+        n = select(max+1, &th->scratch_readfds, &th->scratch_writefds, &th->scratch_exceptfds, delay_ptr);
         if (n < 0) {
             int e = errno;
 
@@ -11523,9 +11522,9 @@ rb_thread_schedule()
                 int fd;
                 int dummy;
                 for (fd = 0; fd <= max; fd++) {
-                    if ((FD_ISSET(fd, &readfds) ||
-                         FD_ISSET(fd, &writefds) ||
-                         FD_ISSET(fd, &exceptfds)) &&
+                    if ((FD_ISSET(fd, &th->scratch_readfds) ||
+                         FD_ISSET(fd, &th->scratch_writefds) ||
+                         FD_ISSET(fd, &th->scratch_exceptfds)) &&
 #ifndef _WIN32
                         fcntl(fd, F_GETFD, &dummy) == -1 &&
 #else
@@ -11565,9 +11564,9 @@ rb_thread_schedule()
                     if (th->wait_for & WAIT_SELECT) {
                         int v = 0;
 
-                        v |= find_bad_fds(&readfds, &th->readfds, th->fd);
-                        v |= find_bad_fds(&writefds, &th->writefds, th->fd);
-                        v |= find_bad_fds(&exceptfds, &th->exceptfds, th->fd);
+                        v |= find_bad_fds(&th->scratch_readfds, &th->readfds, th->fd);
+                        v |= find_bad_fds(&th->scratch_writefds, &th->writefds, th->fd);
+                        v |= find_bad_fds(&th->scratch_exceptfds, &th->exceptfds, th->fd);
                         if (v) {
                             th->select_value = n;
                             n = max;
@@ -11586,9 +11585,9 @@ rb_thread_schedule()
                     th->wait_for = 0;
                     th->select_value = 0;
                     found = 1;
-                    intersect_fds(&readfds, &th->readfds, max);
-                    intersect_fds(&writefds, &th->writefds, max);
-                    intersect_fds(&exceptfds, &th->exceptfds, max);
+                    intersect_fds(&th->scratch_readfds, &th->readfds, max);
+                    intersect_fds(&th->scratch_writefds, &th->writefds, max);
+                    intersect_fds(&th->scratch_exceptfds, &th->exceptfds, max);
                 }
             }
             END_FOREACH_FROM(curr, th);
@@ -11602,14 +11601,14 @@ rb_thread_schedule()
              * threads which don't run next should not be changed.
              */
             FOREACH_THREAD_FROM(curr, th) {
-                if ((th->wait_for&WAIT_FD) && FD_ISSET(th->fd, &readfds)) {
+                if ((th->wait_for&WAIT_FD) && FD_ISSET(th->fd, &th->scratch_readfds)) {
                     th->wait_for |= WAIT_DONE;
                     found = 1;
                 }
                 if ((th->wait_for&WAIT_SELECT) &&
-                    (match_fds(&readfds, &th->readfds, max) ||
-                     match_fds(&writefds, &th->writefds, max) ||
-                     match_fds(&exceptfds, &th->exceptfds, max))) {
+                    (match_fds(&th->scratch_readfds, &th->readfds, max) ||
+                     match_fds(&th->scratch_writefds, &th->writefds, max) ||
+                     match_fds(&th->scratch_exceptfds, &th->exceptfds, max))) {
                     th->wait_for |= WAIT_DONE;
                     found = 1;
                 }
@@ -11641,9 +11640,9 @@ rb_thread_schedule()
             next->fd = 0;
         }
         else { /* next->wait_for&WAIT_SELECT */
-            n = intersect_fds(&readfds, &next->readfds, max) +
-                intersect_fds(&writefds, &next->writefds, max) +
-                intersect_fds(&exceptfds, &next->exceptfds, max);
+            n = intersect_fds(&th->scratch_readfds, &next->readfds, max) +
+                intersect_fds(&th->scratch_writefds, &next->writefds, max) +
+                intersect_fds(&th->scratch_exceptfds, &next->exceptfds, max);
             next->select_value = n;
         }
         next->wait_for = 0;
